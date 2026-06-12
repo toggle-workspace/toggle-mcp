@@ -1,0 +1,25 @@
+# Copy this file into toggle-solutions/toggle-brain as:
+# .github/workflows/notify-mcp.yml
+#
+# It fires a repository_dispatch to toggle-mcp whenever master is updated,
+# which triggers the sync.yml workflow in toggle-mcp to pull the latest content.
+#
+# Required: add GH_PAT (repo + workflow scopes) as a secret in toggle-brain.
+
+name: Notify MCP on master merge
+
+on:
+  push:
+    branches: [master, main]
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send repository_dispatch to toggle-mcp
+        run: |
+          curl -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GH_PAT }}" \
+            https://api.github.com/repos/toggle-solutions/toggle-mcp/dispatches \
+            -d '{"event_type":"toggle-brain-updated"}'
