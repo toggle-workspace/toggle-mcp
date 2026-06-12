@@ -2,7 +2,7 @@
 
 A [Model Context Protocol](https://modelcontextprotocol.io) server that exposes the Toggle Brain knowledge base, prompt templates, and executable scripts to any MCP-compatible AI assistant — Claude Code, Cursor, Windsurf, and more.
 
-Content is fetched live from the `toggle-brain` GitHub repository on startup — no submodule, no manual sync. Whenever toggle-brain is updated, restarting the server picks up the latest content automatically.
+Content lives in the `toggle-brain` repository and is automatically synced here on every push. You never need a GitHub token, API keys, or manual updates at runtime — just clone, build, and connect.
 
 ---
 
@@ -19,18 +19,8 @@ Content is fetched live from the `toggle-brain` GitHub repository on startup —
 ## Prerequisites
 
 - Node.js 20 LTS or later
-- A GitHub fine-grained PAT with **read-only Contents access** to `toggle-workspace/toggle-brain`
 
-### Generating the token
-
-1. Go to **GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens**
-2. Click **Generate new token**
-3. Set:
-   - **Token name**: `toggle-mcp-content-read`
-   - **Resource owner**: `toggle-workspace`
-   - **Repository access**: Only select repositories → `toggle-brain`
-   - **Permissions → Contents**: Read-only
-4. Copy the token immediately after generating
+That's it. No tokens, no API keys, no external services.
 
 ---
 
@@ -50,21 +40,10 @@ npm install
 npm run build
 ```
 
-### 3. Add your token
-
-Create a `.env` file in the project root:
-
-```
-BRAIN_READ_TOKEN=github_pat_your_token_here
-```
-
-The `.env` file is gitignored and never committed.
-
-### 4. Verify it works
+### 3. Verify it works
 
 ```bash
 node dist/index.js
-# Fetching content from toggle-brain...
 # Loaded: 153 resources, 15 prompts, 1 tools
 ```
 
@@ -72,66 +51,37 @@ node dist/index.js
 
 ## Connecting to Claude Code
 
-### Option A — CLI (recommended)
+From inside the cloned `toggle-mcp` directory, run:
 
 ```bash
-claude mcp add toggle-brain node /absolute/path/to/toggle-mcp/dist/index.js
+claude mcp add toggle-brain node "$(pwd)/dist/index.js"
 ```
 
-The server needs `BRAIN_READ_TOKEN` available when Claude Code launches it. Add it to your shell profile (`.zshrc` / `.bashrc`):
+Then run `/mcp` inside a Claude Code session to confirm it is connected:
 
-```bash
-export BRAIN_READ_TOKEN=github_pat_your_token_here
 ```
-
-Then reload your shell and restart Claude Code.
-
-Verify it connected:
-
-```bash
-claude mcp list
-# toggle-brain: node ... - ✓ Connected
+/mcp
+# toggle-brain — Connected
 ```
-
-### Option B — `.mcp.json` (project-scoped)
-
-Create `.mcp.json` at the root of any project:
-
-```json
-{
-  "mcpServers": {
-    "toggle-brain": {
-      "command": "node",
-      "args": ["/absolute/path/to/toggle-mcp/dist/index.js"],
-      "env": {
-        "BRAIN_READ_TOKEN": "github_pat_your_token_here"
-      }
-    }
-  }
-}
-```
-
-Run `/mcp` in a Claude Code session to reload.
 
 ---
 
 ## Connecting to Cursor
 
-Add to `~/.cursor/mcp.json` or via **Cursor Settings → MCP**:
+Add to `~/.cursor/mcp.json` (or via **Cursor Settings → MCP**):
 
 ```json
 {
   "mcpServers": {
     "toggle-brain": {
       "command": "node",
-      "args": ["/absolute/path/to/toggle-mcp/dist/index.js"],
-      "env": {
-        "BRAIN_READ_TOKEN": "github_pat_your_token_here"
-      }
+      "args": ["/path/to/toggle-mcp/dist/index.js"]
     }
   }
 }
 ```
+
+Replace `/path/to/toggle-mcp` with the actual path where you cloned the repo.
 
 ---
 
@@ -144,20 +94,19 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
   "mcpServers": {
     "toggle-brain": {
       "command": "node",
-      "args": ["/absolute/path/to/toggle-mcp/dist/index.js"],
-      "env": {
-        "BRAIN_READ_TOKEN": "github_pat_your_token_here"
-      }
+      "args": ["/path/to/toggle-mcp/dist/index.js"]
     }
   }
 }
 ```
 
+Replace `/path/to/toggle-mcp` with the actual path where you cloned the repo.
+
 ---
 
 ## Remote / HTTP mode
 
-Set `TRANSPORT=http` to run as an SSE server:
+Set `TRANSPORT=http` to run as an SSE server on a fixed port:
 
 ```bash
 TRANSPORT=http PORT=3000 node dist/index.js
@@ -171,11 +120,11 @@ Point any MCP client at `http://localhost:3000/sse`.
 
 Once connected, the AI assistant can:
 
-- **Browse knowledge** — ask it to read resources like "summarise the Toggle Brain positioning docs" or reference `kb://brain--services--copywriting`
+- **Browse knowledge** — ask it to read resources like "summarise the Toggle Brain positioning docs" or reference `kb://brain--services--copywriting` directly
 - **Run prompt templates** — ask it to use a prompt like `generators--email-sequence` with your variables filled in
-- **Execute tools** — any `.ts` or `.py` scripts in toggle-brain are callable as tools
+- **Execute tools** — any `.ts` or `.py` scripts from toggle-brain are callable as tools
 
-In Claude Code, confirm what's loaded at any time:
+In Claude Code, confirm what is loaded at any time:
 
 ```
 /mcp
@@ -183,9 +132,31 @@ In Claude Code, confirm what's loaded at any time:
 
 ---
 
-## Getting the latest content
+## For maintainers
 
-Content is fetched fresh from toggle-brain every time the server starts. To pick up new content, simply restart your AI assistant (or reload the MCP server).
+### How the sync works
+
+Content in this repo is kept up to date by a two-step GitHub Actions pipeline:
+
+1. **toggle-brain** runs `.github/workflows/notify-mcp.yml` on every push to `main`. This workflow dispatches a `repository_dispatch` event of type `toggle-brain-updated` to the `toggle-mcp` repository.
+2. **toggle-mcp** has `.github/workflows/sync-brain.yml` which listens for that event, checks out toggle-brain, copies its contents into this repo, and commits and pushes the result.
+
+The MCP server reads from the local `content/` directory at runtime — no network calls, no tokens required for end users.
+
+### Required secret
+
+The `toggle-brain` notify workflow needs a GitHub PAT stored as a repository secret named `GH_PAT`. This token must have:
+
+- **repo** scope (to dispatch events to toggle-mcp)
+- **workflow** scope (to trigger Actions workflows)
+
+Add it at: `toggle-brain repo → Settings → Secrets and variables → Actions → New repository secret`
+
+### Adding the notify workflow to toggle-brain
+
+See `TOGGLE_BRAIN_SETUP.md` for the step-by-step guide. In short, create `.github/workflows/notify-mcp.yml` in the `toggle-brain` repository with the content from `toggle-brain-notify-workflow.yml` in this repo.
+
+Once this is in place, every push to `toggle-brain/main` will automatically update the content in this repo within seconds.
 
 ---
 
@@ -193,8 +164,9 @@ Content is fetched fresh from toggle-brain every time the server starts. To pick
 
 | Symptom | Fix |
 |---|---|
-| `BRAIN_READ_TOKEN is not set` | Add the token to `.env` or your shell profile |
-| `GitHub API error 401` | Token is invalid or expired — regenerate it |
-| `GitHub API error 404` | Token doesn't have access to toggle-brain — check repo permissions |
 | `toggle-brain` not in `/mcp` list | Re-run `claude mcp add ...` and restart the session |
-| Build fails with type errors | Ensure Node.js 20+ is installed |
+| Resources show as empty or missing | Run `git pull` to get the latest synced content, then rebuild |
+| Build fails with type errors | Ensure Node.js 20 or later is installed (`node --version`) |
+| Sync Action fails in toggle-brain | Check that the `GH_PAT` secret is set with `repo` and `workflow` scopes |
+| Sync Action fails in toggle-mcp | Check that `sync-brain.yml` is present and the dispatch event type matches `brain-updated` |
+| HTTP mode not reachable | Confirm `TRANSPORT=http` and `PORT` are set, and that the port is not blocked by a firewall |
