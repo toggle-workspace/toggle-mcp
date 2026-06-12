@@ -51,8 +51,10 @@ node dist/index.js
 
 ## Connecting to Claude Code
 
+From inside the cloned `toggle-mcp` directory, run:
+
 ```bash
-claude mcp add toggle-brain node /absolute/path/to/toggle-mcp/dist/index.js
+claude mcp add toggle-brain node "$(pwd)/dist/index.js"
 ```
 
 Then run `/mcp` inside a Claude Code session to confirm it is connected:
@@ -73,11 +75,13 @@ Add to `~/.cursor/mcp.json` (or via **Cursor Settings → MCP**):
   "mcpServers": {
     "toggle-brain": {
       "command": "node",
-      "args": ["/absolute/path/to/toggle-mcp/dist/index.js"]
+      "args": ["/path/to/toggle-mcp/dist/index.js"]
     }
   }
 }
 ```
+
+Replace `/path/to/toggle-mcp` with the actual path where you cloned the repo.
 
 ---
 
@@ -90,11 +94,13 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
   "mcpServers": {
     "toggle-brain": {
       "command": "node",
-      "args": ["/absolute/path/to/toggle-mcp/dist/index.js"]
+      "args": ["/path/to/toggle-mcp/dist/index.js"]
     }
   }
 }
 ```
+
+Replace `/path/to/toggle-mcp` with the actual path where you cloned the repo.
 
 ---
 
@@ -132,8 +138,8 @@ In Claude Code, confirm what is loaded at any time:
 
 Content in this repo is kept up to date by a two-step GitHub Actions pipeline:
 
-1. **toggle-brain** runs `.github/workflows/toggle-brain-notify-workflow.yml` on every push to `main`. This workflow dispatches a `repository_dispatch` event of type `brain-updated` to the `toggle-mcp` repository.
-2. **toggle-mcp** has `.github/workflows/sync-brain.yml` which listens for that event, checks out toggle-brain, copies its `content/` directory into this repo, and commits and pushes the result.
+1. **toggle-brain** runs `.github/workflows/notify-mcp.yml` on every push to `main`. This workflow dispatches a `repository_dispatch` event of type `toggle-brain-updated` to the `toggle-mcp` repository.
+2. **toggle-mcp** has `.github/workflows/sync-brain.yml` which listens for that event, checks out toggle-brain, copies its contents into this repo, and commits and pushes the result.
 
 The MCP server reads from the local `content/` directory at runtime — no network calls, no tokens required for end users.
 
@@ -148,27 +154,7 @@ Add it at: `toggle-brain repo → Settings → Secrets and variables → Actions
 
 ### Adding the notify workflow to toggle-brain
 
-Create `.github/workflows/toggle-brain-notify-workflow.yml` in the `toggle-brain` repository:
-
-```yaml
-name: Notify toggle-mcp on push
-
-on:
-  push:
-    branches:
-      - main
-
-jobs:
-  dispatch:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Send repository_dispatch to toggle-mcp
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ secrets.GH_PAT }}
-          repository: toggle-workspace/toggle-mcp
-          event-type: brain-updated
-```
+See `TOGGLE_BRAIN_SETUP.md` for the step-by-step guide. In short, create `.github/workflows/notify-mcp.yml` in the `toggle-brain` repository with the content from `toggle-brain-notify-workflow.yml` in this repo.
 
 Once this is in place, every push to `toggle-brain/main` will automatically update the content in this repo within seconds.
 
