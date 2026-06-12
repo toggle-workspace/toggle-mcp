@@ -1,10 +1,20 @@
-import { readFileSync } from "fs";
-import { glob } from "glob";
-import path from "path";
-import { fileURLToPath } from "url";
+import "dotenv/config";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CONTENT_ROOT = path.resolve(__dirname, "../../content");
+const OWNER = "toggle-workspace";
+const REPO = "toggle-brain";
+const BRANCH = "main";
+const BASE_URL = `https://api.github.com/repos/${OWNER}/${REPO}`;
+
+const token = process.env.BRAIN_READ_TOKEN;
+if (!token) {
+  throw new Error("BRAIN_READ_TOKEN is not set. Add it to your .env file.");
+}
+
+const HEADERS: HeadersInit = {
+  Authorization: `Bearer ${token}`,
+  Accept: "application/vnd.github+json",
+  "X-GitHub-Api-Version": "2022-11-28",
+};
 
 export interface KbArticle {
   slug: string;
@@ -25,7 +35,13 @@ export interface ScriptTool {
   description: string;
   filePath: string;
   runtime: "node" | "python";
+  content: string;
 }
+
+// Folders → Resources
+const KB_DIRS = ["brain", "cockpit", "clients", "templates", "archive"];
+// Folders → Prompts
+const PROMPT_DIRS = ["generators", "playbooks"];
 
 function extractTitle(content: string, fallback: string): string {
   const match = content.match(/^#\s+(.+)/m);
@@ -43,32 +59,69 @@ function extractScriptDescription(content: string, runtime: "node" | "python"): 
   return line ? line.replace(commentChar, "").trim() : "";
 }
 
-// Folders treated as knowledge base Resources
-const KB_DIRS = ["brain", "cockpit", "clients", "templates", "archive"];
-
-// Folders treated as callable Prompts
-const PROMPT_DIRS = ["generators", "playbooks"];
-
-export function loadKnowledgeBase(): KbArticle[] {
-  return KB_DIRS.flatMap((dir) => {
-    const absDir = path.join(CONTENT_ROOT, dir);
-    const files = glob.sync("**/*.md", { cwd: absDir, absolute: true, ignore: ["**/CLAUDE.md"] });
-    return files.map((filePath) => {
-      const content = readFileSync(filePath, "utf-8");
-      const rel = path.relative(absDir, filePath);
-      const slug = `${dir}--${rel.replace(/\.md$/, "").replace(/\//g, "--")}`;
-      return { slug, title: extractTitle(content, slug), content, uri: `kb://${slug}` };
-    });
-  });
+interface GitHubTreeItem {
+  path: string;
+  type: string;
+  url: string;
+  sha: string;
 }
 
-export function loadSkillPrompts(): SkillPrompt[] {
-  return PROMPT_DIRS.flatMap((dir) => {
-    const absDir = path.join(CONTENT_ROOT, dir);
-    const files = glob.sync("**/*.md", { cwd: absDir, absolute: true, ignore: ["**/CLAUDE.md"] });
-    return files.map((filePath) => {
-      const content = readFileSync(filePath, "utf-8");
-      const base = path.basename(filePath, path.extname(filePath));
+async function fetchTree(): Promise<GitHubTreeItem[]> {
+  const res = await fetch(
+    `${BASE_URL}/git/trees/${BRANCH}?recursive=1`,
+    { headers: HEADERS }
+  );
+  if (!res.ok) throw new Error(`GitHub API error ${res.status}: ${await res.text()}`);
+  const data = await res.json() as { tree: GitHubTreeItem[] };
+  return data.tree;
+}
+
+async function fetchFileContent(path: string): Promise<string> {
+  const res = await fetch(
+    `${BASE_URL}/contents/${path}?ref=${BRANCH}`,
+    { headers: HEADERS }
+  );
+  if (!res.ok) throw new Error(`Failed to fetch ${path}: ${res.status}`);
+  const data = await res.json() as { content: string; encoding: string };
+  return Buffer.from(data.content, "base64").toString("utf-8");
+}
+
+export async function loadKnowledgeBase(): Promise<KbArticle[]> {
+  const tree = await fetchTree();
+  const files = tree.filter(
+    (item) =>
+      item.type === "blob" &&
+      item.path.endsWith(".md") &&
+      !item.path.endsWith("CLAUDE.md") &&
+      KB_DIRS.some((dir) => item.path.startsWith(`${dir}/`))
+  );
+
+  return Promise.all(
+    files.map(async (item) => {
+      const content = await fetchFileContent(item.path);
+      const dir = KB_DIRS.find((d) => item.path.startsWith(`${d}/`))!;
+      const rel = item.path.slice(dir.length + 1).replace(/\.md$/, "").replace(/\//g, "--");
+      const slug = `${dir}--${rel}`;
+      return { slug, title: extractTitle(content, slug), content, uri: `kb://${slug}` };
+    })
+  );
+}
+
+export async function loadSkillPrompts(): Promise<SkillPrompt[]> {
+  const tree = await fetchTree();
+  const files = tree.filter(
+    (item) =>
+      item.type === "blob" &&
+      item.path.endsWith(".md") &&
+      !item.path.endsWith("CLAUDE.md") &&
+      PROMPT_DIRS.some((dir) => item.path.startsWith(`${dir}/`))
+  );
+
+  return Promise.all(
+    files.map(async (item) => {
+      const content = await fetchFileContent(item.path);
+      const dir = PROMPT_DIRS.find((d) => item.path.startsWith(`${d}/`))!;
+      const base = item.path.split("/").pop()!.replace(/\.md$/, "");
       const name = `${dir}--${base}`.replace(/\s+/g, "-").toLowerCase();
       const argMatches = [...content.matchAll(/\{\{(\w+)\}\}/g)];
       const uniqueArgs = [...new Set(argMatches.map((m) => m[1]))];
@@ -78,21 +131,33 @@ export function loadSkillPrompts(): SkillPrompt[] {
         content,
         arguments: uniqueArgs.map((a) => ({ name: a, description: a, required: false })),
       };
-    });
-  });
+    })
+  );
 }
 
-export function loadScriptTools(): ScriptTool[] {
-  // Scan entire content root for executable scripts
-  const tsFiles = glob.sync("**/*.ts", { cwd: CONTENT_ROOT, absolute: true });
-  const pyFiles = glob.sync("**/*.py", { cwd: CONTENT_ROOT, absolute: true });
-  return [
-    ...tsFiles.map((f) => ({ f, runtime: "node" as const })),
-    ...pyFiles.map((f) => ({ f, runtime: "python" as const })),
-  ].map(({ f, runtime }) => {
-    const content = readFileSync(f, "utf-8");
-    const rel = path.relative(CONTENT_ROOT, f);
-    const name = rel.replace(/\.[^.]+$/, "").replace(/[/\s-]+/g, "_").toLowerCase();
-    return { name, description: extractScriptDescription(content, runtime), filePath: f, runtime };
-  });
+export async function loadScriptTools(): Promise<ScriptTool[]> {
+  const tree = await fetchTree();
+  const files = tree.filter(
+    (item) =>
+      item.type === "blob" &&
+      (item.path.endsWith(".ts") || item.path.endsWith(".py"))
+  );
+
+  return Promise.all(
+    files.map(async (item) => {
+      const content = await fetchFileContent(item.path);
+      const runtime: "node" | "python" = item.path.endsWith(".py") ? "python" : "node";
+      const name = item.path
+        .replace(/\.[^.]+$/, "")
+        .replace(/[/\s-]+/g, "_")
+        .toLowerCase();
+      return {
+        name,
+        description: extractScriptDescription(content, runtime),
+        filePath: item.path,
+        runtime,
+        content,
+      };
+    })
+  );
 }

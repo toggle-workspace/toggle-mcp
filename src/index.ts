@@ -3,7 +3,7 @@ import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import express from "express";
 import { createServer } from "./server.js";
 
-const server = createServer();
+const server = await createServer();
 
 if (process.env.TRANSPORT === "http") {
   const app = express();
