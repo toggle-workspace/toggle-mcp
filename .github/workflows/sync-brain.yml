@@ -1,0 +1,36 @@
+name: Sync content from toggle-brain
+
+on:
+  repository_dispatch:
+    types: [toggle-brain-updated]
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Checkout toggle-brain
+        uses: actions/checkout@v4
+        with:
+          repository: toggle-workspace/toggle-brain
+          path: _brain
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Copy content
+        run: |
+          rm -rf content
+          mkdir -p content
+          rsync -a --delete             --exclude='.git'             --exclude='CLAUDE.md'             --exclude='CONTRIBUTING.md'             --exclude='.github'             _brain/ content/
+          rm -rf _brain
+
+      - name: Commit and push if content changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add content/
+          git diff --staged --quiet || git commit -m "chore: sync content from toggle-brain"
+          git push
