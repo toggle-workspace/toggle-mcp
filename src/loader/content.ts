@@ -43,53 +43,56 @@ function extractScriptDescription(content: string, runtime: "node" | "python"): 
   return line ? line.replace(commentChar, "").trim() : "";
 }
 
+// Folders treated as knowledge base Resources
+const KB_DIRS = ["brain", "cockpit", "clients", "templates", "archive"];
+
+// Folders treated as callable Prompts
+const PROMPT_DIRS = ["generators", "playbooks"];
+
 export function loadKnowledgeBase(): KbArticle[] {
-  const dir = path.join(CONTENT_ROOT, "knowledge-base");
-  const files = glob.sync("**/*.md", { cwd: dir, absolute: true });
-  return files.map((filePath) => {
-    const content = readFileSync(filePath, "utf-8");
-    const rel = path.relative(dir, filePath);
-    const slug = rel.replace(/\.md$/, "").replace(/\//g, "--");
-    return { slug, title: extractTitle(content, slug), content, uri: `kb://${slug}` };
+  return KB_DIRS.flatMap((dir) => {
+    const absDir = path.join(CONTENT_ROOT, dir);
+    const files = glob.sync("**/*.md", { cwd: absDir, absolute: true, ignore: ["**/CLAUDE.md"] });
+    return files.map((filePath) => {
+      const content = readFileSync(filePath, "utf-8");
+      const rel = path.relative(absDir, filePath);
+      const slug = `${dir}--${rel.replace(/\.md$/, "").replace(/\//g, "--")}`;
+      return { slug, title: extractTitle(content, slug), content, uri: `kb://${slug}` };
+    });
   });
 }
 
 export function loadSkillPrompts(): SkillPrompt[] {
-  const skillFiles = glob.sync("**/*.md", {
-    cwd: path.join(CONTENT_ROOT, "skills"),
-    absolute: true,
-  });
-  const promptFiles = glob.sync("**/*.{md,txt}", {
-    cwd: path.join(CONTENT_ROOT, "prompts"),
-    absolute: true,
-  });
-  return [...skillFiles, ...promptFiles].map((filePath) => {
-    const content = readFileSync(filePath, "utf-8");
-    const name = path.basename(filePath, path.extname(filePath))
-      .replace(/\s+/g, "-")
-      .toLowerCase();
-    const argMatches = [...content.matchAll(/\{\{(\w+)\}\}/g)];
-    const uniqueArgs = [...new Set(argMatches.map((m) => m[1]))];
-    return {
-      name,
-      description: extractDescription(content),
-      content,
-      arguments: uniqueArgs.map((a) => ({ name: a, description: a, required: false })),
-    };
+  return PROMPT_DIRS.flatMap((dir) => {
+    const absDir = path.join(CONTENT_ROOT, dir);
+    const files = glob.sync("**/*.md", { cwd: absDir, absolute: true, ignore: ["**/CLAUDE.md"] });
+    return files.map((filePath) => {
+      const content = readFileSync(filePath, "utf-8");
+      const base = path.basename(filePath, path.extname(filePath));
+      const name = `${dir}--${base}`.replace(/\s+/g, "-").toLowerCase();
+      const argMatches = [...content.matchAll(/\{\{(\w+)\}\}/g)];
+      const uniqueArgs = [...new Set(argMatches.map((m) => m[1]))];
+      return {
+        name,
+        description: extractDescription(content),
+        content,
+        arguments: uniqueArgs.map((a) => ({ name: a, description: a, required: false })),
+      };
+    });
   });
 }
 
 export function loadScriptTools(): ScriptTool[] {
-  const tsFiles = glob.sync("**/*.ts", { cwd: path.join(CONTENT_ROOT, "scripts"), absolute: true });
-  const pyFiles = glob.sync("**/*.py", { cwd: path.join(CONTENT_ROOT, "scripts"), absolute: true });
+  // Scan entire content root for executable scripts
+  const tsFiles = glob.sync("**/*.ts", { cwd: CONTENT_ROOT, absolute: true });
+  const pyFiles = glob.sync("**/*.py", { cwd: CONTENT_ROOT, absolute: true });
   return [
     ...tsFiles.map((f) => ({ f, runtime: "node" as const })),
     ...pyFiles.map((f) => ({ f, runtime: "python" as const })),
   ].map(({ f, runtime }) => {
     const content = readFileSync(f, "utf-8");
-    const name = path.basename(f, path.extname(f))
-      .replace(/[\s-]+/g, "_")
-      .toLowerCase();
+    const rel = path.relative(CONTENT_ROOT, f);
+    const name = rel.replace(/\.[^.]+$/, "").replace(/[/\s-]+/g, "_").toLowerCase();
     return { name, description: extractScriptDescription(content, runtime), filePath: f, runtime };
   });
 }
